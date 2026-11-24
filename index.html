@@ -1222,21 +1222,41 @@ window.DONGBA_DATA = [{"id":1,"cn":"上","naxi":"ddaq","en":"Up","svg":"\u003cpa
   /* ---------- 语音 ---------- */
   function speak(text, lang) {
     if (!('speechSynthesis' in window)) {
-      toast('当前浏览器不支持语音播放');
+      toast('当前浏览器不支持朗读，可换 Chrome 或系统浏览器打开');
       return;
     }
-    window.speechSynthesis.cancel();
-    var u = new SpeechSynthesisUtterance(text);
-    u.lang = lang;
-    u.rate = 0.85;
+    var synth = window.speechSynthesis;
+    try { synth.cancel(); } catch (e) {}
+    var u = new SpeechSynthesisUtterance(String(text));
+    u.lang = lang || 'zh-CN';
+    u.rate = 0.82;
     u.pitch = 1;
-    // 尝试匹配对应语言的声音
-    var voices = window.speechSynthesis.getVoices();
-    var match = voices.find(function (v) { return v.lang && v.lang.toLowerCase().indexOf(lang.toLowerCase().slice(0, 2)) === 0; });
-    if (match) u.voice = match;
-    u.onend = function () {};
-    u.onerror = function () { toast('语音播放失败，请检查系统语音设置'); };
-    window.speechSynthesis.speak(u);
+    u.volume = 1;
+    var voices = [];
+    try { voices = synth.getVoices() || []; } catch (e) {}
+    var pre = String(u.lang).toLowerCase().slice(0, 2);
+    var picked = null, fallback = null;
+    for (var i = 0; i < voices.length; i++) {
+      var v = voices[i];
+      if (!v || !v.lang) continue;
+      var vl = v.lang.toLowerCase().replace('_', '-');
+      if (vl.indexOf(pre) === 0) {
+        if (!fallback) fallback = v;
+        if (/zh|cmn|中文|chinese/i.test(v.lang + ' ' + v.name)) { picked = v; break; }
+      }
+    }
+    if (picked) u.voice = picked; else if (fallback) u.voice = fallback;
+    u.onerror = function (ev) {
+      var err = ev && ev.error;
+      if (err === 'not-allowed') toast('请先点一下页面，再点播放读音');
+      else if (err === 'voice-unavailable' || err === 'language-unavailable') toast('设备缺少中文语音包，读音可能不可用');
+      else toast('朗读没有成功，可换系统浏览器试试');
+    };
+    var fire = function () {
+      try { synth.resume(); } catch (e) {}
+      try { synth.speak(u); } catch (e) { toast('朗读失败：' + e.message); }
+    };
+    setTimeout(fire, 40);
   }
 
   /* ---------- Excel 导出（纯前端 XLSX 生成） ---------- */
@@ -1884,5 +1904,354 @@ window.DONGBA_DATA = [{"id":1,"cn":"上","naxi":"ddaq","en":"Up","svg":"\u003cpa
   renderIndex();
 })();
 </script>
+<style id="plus-style">
+  /* ===== 字形清晰化 ===== */
+  .card-glyph svg { width: 104px !important; height: 104px !important; shape-rendering: crispEdges; }
+  .card-glyph svg path { stroke: currentColor; stroke-width: 0.42; stroke-linejoin: miter; }
+  .modal-glyph { width: 240px !important; height: 240px !important; }
+  .modal-glyph svg path, .featured-glyph svg path { shape-rendering: crispEdges; }
+  @media (max-width: 768px) {
+    .card-glyph svg { width: 92px !important; height: 92px !important; }
+    .card-glyph { height: 96px !important; }
+  }
+
+  /* ===== 加载提示 ===== */
+  #loadingBar { position: fixed; top: 0; left: 0; right: 0; z-index: 4000; background: #1b2b3a; color: #f6f1e6;
+    font-size: 12.5px; text-align: center; padding: 7px 12px; letter-spacing: 0.05em; transition: opacity 0.4s; }
+  #loadingBar.hide { opacity: 0; pointer-events: none; }
+
+  /* ===== 浮动工具按钮 ===== */
+  .plus-dock { position: fixed; right: 18px; bottom: 92px; z-index: 1500; display: flex; flex-direction: column; gap: 10px; }
+  .plus-btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid rgba(122,60,52,0.25);
+    background: rgba(255,253,248,0.96); box-shadow: 0 6px 20px rgba(40,30,25,0.18); font-size: 21px; line-height: 1;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; color: #5c4a3f;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: transform 0.25s; }
+  .plus-btn:hover { transform: translateY(-2px); }
+  .plus-btn.on { background: #8c3a30; color: #fff; border-color: #8c3a30; }
+
+  /* ===== 小助手面板 ===== */
+  #botMask { position: fixed; inset: 0; background: rgba(15,36,64,0.55); z-index: 2500; display: none; }
+  #botPanel { position: fixed; right: 18px; bottom: 18px; width: 400px; max-width: calc(100vw - 24px);
+    height: 560px; max-height: calc(100vh - 24px); background: #fffdf8; border: 1px solid rgba(122,60,52,0.2);
+    border-radius: 14px; box-shadow: 0 20px 60px rgba(20,20,20,0.28); z-index: 2600; display: none;
+    flex-direction: column; overflow: hidden; }
+  #botHead { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: #1b2b3a; color: #f3ead7; }
+  #botHead b { font-size: 14px; letter-spacing: 0.08em; font-weight: 600; }
+  #botClose { background: none; border: none; color: #f3ead7; font-size: 18px; cursor: pointer; line-height: 1; }
+  #botLog { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: #fbf8f1; }
+  .bub { max-width: 88%; padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.7; word-break: break-word; }
+  .bub.bot { background: #fff; border: 1px solid rgba(122,60,52,0.14); align-self: flex-start; color: #3c332c; }
+  .bub.me { background: #8c3a30; color: #fff; align-self: flex-end; }
+  .bub svg { width: 76px; height: 76px; display: block; margin: 6px 0; color: #22354a; }
+  .bub .bub-title { display: block; font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .bub .bub-meta { display: block; color: #7a6a5e; font-size: 12px; margin-top: 4px; }
+  .bot-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; background: #fffdf8; border-top: 1px dashed rgba(122,60,52,0.15); }
+  .bot-chip { font-size: 12px; padding: 5px 10px; border-radius: 14px; border: 1px solid rgba(122,60,52,0.22);
+    background: #fff; cursor: pointer; color: #5c4a3f; }
+  .bot-chip:hover { background: #f6efe2; }
+  #botForm { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(122,60,52,0.15); background: #fff; }
+  #botInput { flex: 1; min-width: 0; border: 1px solid rgba(122,60,52,0.22); border-radius: 20px; padding: 9px 14px;
+    font-size: 13px; outline: none; background: #fffdf8; }
+  #botSend { border: none; border-radius: 20px; padding: 0 16px; background: #8c3a30; color: #fff; font-size: 13px; cursor: pointer; }
+  @media (max-width: 520px) {
+    #botPanel { right: 8px; left: 8px; bottom: 8px; width: auto; height: 78vh; }
+    .plus-dock { bottom: 84px; right: 12px; }
+  }
+</style>
+
+<div id="loadingBar">正在加载 416 条东巴字形数据…首次打开约需十几秒，加载完卡片会自动出现</div>
+
+<div class="plus-dock">
+  <button class="plus-btn" id="btnBot" title="东巴文字小助手" aria-label="东巴文字小助手">🪶</button>
+  <button class="plus-btn" id="btnBgm" title="背景音乐" aria-label="背景音乐">🎵</button>
+</div>
+
+<div id="botMask"></div>
+<div id="botPanel" role="dialog" aria-label="东巴文字小助手">
+  <div id="botHead">
+    <b>东巴文字小助手 · 巴格</b>
+    <button id="botClose" aria-label="关闭">×</button>
+  </div>
+  <div id="botLog"></div>
+  <div class="bot-chips" id="botChips"></div>
+  <form id="botForm" autocomplete="off">
+    <input id="botInput" type="text" placeholder="例如：日 / ddaq / 有多少个字 / 随机一个字" />
+    <button id="botSend" type="submit">发送</button>
+  </form>
+</div>
+
+<script>
+/* ===== 增强模块：清晰字形 / 语音兜底 / 小助手 / 背景音乐 ===== */
+(function () {
+  'use strict';
+  var DATA = window.DONGBA_DATA || [];
+  var doc = document;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function glyphSvg(e, cls) {
+    return '<svg class="' + (cls || '') + '" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">' + e.svg + '</svg>';
+  }
+  function toast(msg) {
+    var t = doc.getElementById('toast');
+    if (!t) { return; }
+    t.textContent = msg;
+    t.style.display = 'block';
+    clearTimeout(t._plusTimer);
+    t._plusTimer = setTimeout(function () { t.style.display = 'none'; }, 2600);
+  }
+
+  /* ---------- 1. 加载提示条 ---------- */
+  var bar = doc.getElementById('loadingBar');
+  var waited = 0;
+  var poll = setInterval(function () {
+    waited += 300;
+    var cards = doc.querySelectorAll('.char-card');
+    var chips = doc.querySelectorAll('.filter-chip');
+    if ((cards.length > 0 && chips.length > 0) || waited > 90000) {
+      clearInterval(poll);
+      // 部分手机 WebView 的 IntersectionObserver 不触发，兜底让卡片直接可见
+      try {
+        Array.prototype.forEach.call(cards, function (c) { c.classList.add('is-visible'); });
+      } catch (e) {}
+      if (bar) { bar.classList.add('hide'); setTimeout(function () { if (bar) bar.style.display = 'none'; }, 500); }
+    }
+  }, 300);
+
+  /* ---------- 2. 语音预热（移动端首次交互解锁 TTS） ---------- */
+  var primed = false;
+  function primeTTS() {
+    if (primed || !('speechSynthesis' in window)) { return; }
+    primed = true;
+    try {
+      var u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      u.lang = 'zh-CN';
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  doc.addEventListener('touchstart', primeTTS, { passive: true, once: true });
+  doc.addEventListener('click', primeTTS, { once: true });
+
+  /* ---------- 3. 背景音乐（原生 Web Audio 生成氛围音） ---------- */
+  var bgm = { ctx: null, master: null, oscs: [], on: false };
+  function bgmStart() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { toast('当前浏览器不支持音频合成'); return; }
+    if (bgm.ctx) {
+      try { bgm.ctx.resume(); } catch (e) {}
+      bgm.master.gain.cancelScheduledValues(bgm.ctx.currentTime);
+      bgm.master.gain.linearRampToValueAtTime(0.1, bgm.ctx.currentTime + 1.6);
+      bgm.on = true;
+      return;
+    }
+    var ctx = new AC();
+    bgm.ctx = ctx;
+    var master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+    bgm.master = master;
+
+    var filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1100;
+    filter.Q.value = 0.6;
+    filter.connect(master);
+
+    // 五声音阶轻柔叠加，营造空灵氛围
+    var notes = [174.6, 196.0, 261.6, 293.7, 349.2];
+    notes.forEach(function (f, i) {
+      var o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = f;
+      var g = ctx.createGain();
+      g.gain.value = 0.028 - i * 0.004;
+      var lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.05 + i * 0.017;
+      var lfoGain = ctx.createGain();
+      lfoGain.gain.value = g.gain.value * 0.55;
+      lfo.connect(lfoGain);
+      lfoGain.connect(g.gain);
+      o.connect(g);
+      g.connect(filter);
+      o.start();
+      lfo.start();
+      bgm.oscs.push(o, lfo);
+    });
+
+    // 极轻的低频风声
+    var buf = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate);
+    var chan = buf.getChannelData(0);
+    for (var i = 0; i < chan.length; i++) { chan[i] = (Math.random() * 2 - 1) * 0.5; }
+    var noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    noise.loop = true;
+    var nf = ctx.createBiquadFilter();
+    nf.type = 'bandpass';
+    nf.frequency.value = 420;
+    nf.Q.value = 0.8;
+    var ng = ctx.createGain();
+    ng.gain.value = 0.03;
+    noise.connect(nf); nf.connect(ng); ng.connect(master);
+    noise.start();
+
+    master.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 2);
+    bgm.on = true;
+  }
+  function bgmStop() {
+    if (!bgm.ctx) { return; }
+    try {
+      bgm.master.gain.cancelScheduledValues(bgm.ctx.currentTime);
+      bgm.master.gain.linearRampToValueAtTime(0, bgm.ctx.currentTime + 0.9);
+    } catch (e) {}
+    bgm.on = false;
+    var ctx = bgm.ctx;
+    setTimeout(function () { try { ctx.suspend(); } catch (e) {} }, 1000);
+  }
+  var bgmBtn = doc.getElementById('btnBgm');
+  if (bgmBtn) {
+    bgmBtn.addEventListener('click', function () {
+      if (bgm.on) { bgmStop(); bgmBtn.classList.remove('on'); bgmBtn.textContent = '🎵'; toast('背景音乐已关闭'); }
+      else { bgmStart(); bgmBtn.classList.add('on'); bgmBtn.textContent = '🔇'; toast('背景音乐已开启 · 可随时关闭'); }
+    });
+  }
+
+  /* ---------- 4. 东巴文字小助手 ---------- */
+  var panel = doc.getElementById('botPanel');
+  var mask = doc.getElementById('botMask');
+  var log = doc.getElementById('botLog');
+  var chips = doc.getElementById('botChips');
+
+  function addBub(html, who) {
+    var d = doc.createElement('div');
+    d.className = 'bub ' + (who || 'bot');
+    d.innerHTML = html;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function glyphBubble(e, extra) {
+    return glyphSvg(e) +
+      '<span class="bub-title">' + esc(e.cn) + ' · ' + esc(e.naxi) + '</span>' +
+      '纳西语标音：<b>' + esc(e.naxi) + '</b><br>' +
+      '英文：' + esc(e.en) + '<br>' +
+      '部目：' + esc(e.catCn) +
+      (e.zs ? '<br>字义：' + esc(e.zs) : '') +
+      (e.ipa ? '<span class="bub-meta">国际音标：' + esc(e.ipa) + '</span>' : '') +
+      (extra ? '<span class="bub-meta">' + extra + '</span>' : '');
+  }
+
+  function norm(s) {
+    return String(s || '').trim().toLowerCase().replace(/[\s，。？！、,.?!'"“”‘’]/g, '');
+  }
+
+  function findGlyph(q) {
+    var nq = norm(q);
+    if (!nq) { return null; }
+    // 1) 中文/标音/英文 精确匹配
+    var hit = DATA.filter(function (e) {
+      return norm(e.cn) === nq || norm(e.naxi) === nq || norm(e.en) === nq;
+    });
+    if (hit.length) { return hit[0]; }
+    // 2) 包含匹配
+    hit = DATA.filter(function (e) {
+      return norm(e.cn).indexOf(nq) === 0 || norm(e.naxi).indexOf(nq) === 0 || norm(e.py || '').indexOf(nq) === 0;
+    });
+    if (hit.length) { return hit[0]; }
+    // 3) 汉字出现在输入里
+    hit = DATA.filter(function (e) { return String(e.cn).length <= 2 && nq.indexOf(norm(e.cn)) !== -1; });
+    return hit.length ? hit[0] : null;
+  }
+
+  function answer(raw) {
+    var q = String(raw || '').trim();
+    if (!q) { return; }
+    addBub(esc(q), 'me');
+    var nq = norm(q);
+
+    if (/^(你好|hi|hello|在吗|嗨)$/.test(nq)) {
+      addBub('你好，我是东巴文字小助手「巴格」。可以问我要某个字的四语对照，也可以问我字库的统计，或者直接说「随机」给你挑一个字。');
+      return;
+    }
+    if (nq.indexOf('多少') !== -1 || nq.indexOf('几条') !== -1 || nq.indexOf('几个字') !== -1 || nq.indexOf('总数') !== -1) {
+      var cats = {};
+      DATA.forEach(function (e) { cats[e.catCn] = (cats[e.catCn] || 0) + 1; });
+      addBub('当前字库共 <b>' + DATA.length + '</b> 条词条，分为 <b>' + Object.keys(cats).length + '</b> 个部目；其中带字义解释的有 ' + DATA.filter(function (e) { return e.zs; }).length + ' 条。');
+      return;
+    }
+    if (nq.indexOf('部目') !== -1 || nq.indexOf('分类') !== -1) {
+      var c2 = {};
+      DATA.forEach(function (e) { c2[e.catCn] = (c2[e.catCn] || 0) + 1; });
+      addBub('部目分布：' + Object.keys(c2).map(function (k) { return esc(k) + ' ' + c2[k] + ' 条'; }).join('、') + '。点「部目」筛选可逐类查看。');
+      return;
+    }
+    if (nq.indexOf('随机') !== -1 || nq.indexOf('随便') !== -1) {
+      var r = DATA[Math.floor(Math.random() * DATA.length)];
+      addBub(glyphBubble(r, '随机第 ' + r.id + ' 条。'));
+      return;
+    }
+
+    var g = findGlyph(q);
+    if (g) {
+      var how = /怎么读|读音|发音|念/.test(q);
+      if (how) {
+        addBub(glyphSvg(g) + '<span class="bub-title">' + esc(g.cn) + ' 怎么读</span>' +
+          '纳西语标音：<b>' + esc(g.naxi) + '</b>' + (g.ipa ? '<br>国际音标：' + esc(g.ipa) : '') +
+          '<span class="bub-meta">点击字典卡片右下角的 🔊，或用详情弹窗里的播放按钮听读音。</span>');
+      } else {
+        addBub(glyphBubble(g));
+      }
+      return;
+    }
+
+    // 没找到：给近似建议
+    var sug = DATA.filter(function (e) { return norm(e.cn).indexOf(nq) !== -1 || norm(e.naxi).indexOf(nq) !== -1; }).slice(0, 4);
+    if (sug.length) {
+      addBub('没有完全匹配，可能你想找的是：' + sug.map(function (e) { return esc(e.cn) + '（' + esc(e.naxi) + '）'; }).join('、') + '。');
+    } else {
+      addBub('这个字暂时不在字库里。可以试试输入中文（如「日」）、纳西语标音（如「ddaq」）或英文（如「sun」）；也可以问我「有哪些部目」「随机一个字」。');
+    }
+  }
+
+  function openPanel() {
+    panel.style.display = 'flex';
+    mask.style.display = 'block';
+    if (!log.children.length) {
+      addBub('我是东巴文字小助手「巴格」，基于本站 416 条四语对照数据回答。试试点下面的快捷问题，或直接输入一个汉字。');
+    }
+  }
+  function closePanel() { panel.style.display = 'none'; mask.style.display = 'none'; }
+
+  var botBtn = doc.getElementById('btnBot');
+  if (botBtn) { botBtn.addEventListener('click', function () { if (panel.style.display === 'flex') { closePanel(); } else { openPanel(); } }); }
+  doc.getElementById('botClose').addEventListener('click', closePanel);
+  mask.addEventListener('click', closePanel);
+
+  var quick = ['随机一个字', '日', 'ddaq', '有多少个字', '有哪些部目'];
+  quick.forEach(function (t) {
+    var b = doc.createElement('button');
+    b.type = 'button';
+    b.className = 'bot-chip';
+    b.textContent = t;
+    b.addEventListener('click', function () { answer(t); });
+    chips.appendChild(b);
+  });
+
+  doc.getElementById('botForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var inp = doc.getElementById('botInput');
+    var v = inp.value;
+    inp.value = '';
+    answer(v);
+  });
+
+  doc.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && panel.style.display === 'flex') { closePanel(); }
+  });
+})();
+</script>
+
 </body>
 </html>
